@@ -27,26 +27,13 @@ class TencentCaptcha {
     return sdkVersion;
   }
 
-  static Future<bool> init(
-    String appId, {
-    bool userAgreement = true,
-    String? androidId,
-  }) async {
+  static Future<bool> init(String appId) async {
     if (_eventChannelReadied != true) {
       _eventChannel.receiveBroadcastStream().listen(_handleVerifyOnEvent);
       _eventChannelReadied = true;
     }
 
     sdkAppId = appId;
-
-    if (!kIsWeb && Platform.isAndroid) {
-      final bool? initialized = await _methodChannel.invokeMethod<bool>('init', {
-        'appId': appId,
-        'userAgreement': userAgreement,
-        if (androidId != null) 'androidId': androidId,
-      });
-      return initialized ?? false;
-    }
 
     return true;
   }

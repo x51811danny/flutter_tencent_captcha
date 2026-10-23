@@ -16,9 +16,6 @@ rootProject.allprojects {
     repositories {
         google()
         mavenCentral()
-        flatDir {
-            dirs project(':flutter_tencent_captcha').file('libs')
-        }
     }
 }
 
@@ -38,16 +35,8 @@ android {
 
     defaultConfig {
         minSdkVersion 21
-        consumerProguardFiles 'proguard-rules.pro'
-        ndk {
-            abiFilters "armeabi-v7a", "arm64-v8a"
-        }
     }
     lintOptions {
         disable 'InvalidPackage'
     }
-}
-
-dependencies {
-    implementation(name: 'android_oversea_v2.1.1', ext: 'aar')
 }

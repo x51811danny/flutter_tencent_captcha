@@ -1,19 +1,12 @@
 package org.leanflutter.plugins.flutter_tencent_captcha;
 
-import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
-import android.util.Log;
 
 import androidx.annotation.NonNull;
-
-import com.tencent.captcha.sdk.RetCode;
-import com.tencent.captcha.sdk.TencentCaptcha;
-import com.tencent.captcha.sdk.TencentCaptchaConfig;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -36,7 +29,6 @@ import io.flutter.plugin.common.MethodChannel.Result;
  * FlutterTencentCaptchaPlugin
  */
 public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, ActivityAware {
-    private static final String TAG = "TencentCaptchaPlugin";
     private static final String CHANNEL_NAME = "flutter_tencent_captcha";
     private static final String EVENT_CHANNEL_NAME = "flutter_tencent_captcha/event_channel";
 
@@ -49,10 +41,7 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
     private Context context;
     private Activity activity;
 
-    private String appId;
-    private boolean userAgreement = true;
-    private String customAndroidId;
-    private boolean sdkInitialized = false;
+    private String captchaHtmlPath;
 
     private void setupChannel(BinaryMessenger messenger, Context context) {
         this.context = context;
@@ -80,6 +69,7 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
+        this.captchaHtmlPath = flutterPluginBinding.getFlutterAssets().getAssetFilePathBySubpath("assets/captcha.html", "flutter_tencent_captcha");
         this.setupChannel(flutterPluginBinding.getBinaryMessenger(), flutterPluginBinding.getApplicationContext());
     }
 
@@ -124,9 +114,6 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
             case "getSDKVersion":
                 handleMethodGetSDKVersion(call, result);
                 break;
-            case "init":
-                handleMethodInit(call, result);
-                break;
             case "verify":
                 handleMethodVerify(call, result);
                 break;
@@ -140,71 +127,7 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
     }
 
     private void handleMethodGetSDKVersion(@NonNull MethodCall call, @NonNull Result result) {
-        result.success("2.1.1");
-    }
-
-    private synchronized boolean ensureSdkInitialized() {
-        if (sdkInitialized) {
-            return true;
-        }
-        if (context == null) {
-            return false;
-        }
-
-        final boolean agreed = this.userAgreement;
-        final String providedAndroidId = this.customAndroidId;
-        final Context appContext = context.getApplicationContext();
-
-        TencentCaptchaConfig.Builder configBuilder = new TencentCaptchaConfig.Builder(
-                appContext,
-                new TencentCaptchaConfig.ITencentCaptchaPrivacyPolicy() {
-                    @Override
-                    public boolean userAgreement() {
-                        return agreed;
-                    }
-                },
-                new TencentCaptchaConfig.ICaptchaDeviceInfoProvider() {
-                    @SuppressLint("HardwareIds")
-                    @Override
-                    public String getAndroidId() {
-                        if (providedAndroidId != null && !providedAndroidId.isEmpty()) {
-                            return providedAndroidId;
-                        }
-                        try {
-                            return Settings.Secure.getString(appContext.getContentResolver(), Settings.Secure.ANDROID_ID);
-                        } catch (Exception e) {
-                            return "";
-                        }
-                    }
-                }
-        );
-
-        RetCode ret = TencentCaptcha.init(configBuilder.build());
-        if (ret == RetCode.OK) {
-            sdkInitialized = true;
-            return true;
-        } else {
-            Log.e(TAG, "TencentCaptcha.init failed, ret code: " + ret.getCode() + " msg: " + ret.getMsg());
-            return false;
-        }
-    }
-
-    private void handleMethodInit(@NonNull MethodCall call, @NonNull Result result) {
-        if (call.hasArgument("appId")) {
-            this.appId = call.argument("appId");
-        }
-        if (call.hasArgument("userAgreement")) {
-            Boolean agreed = call.argument("userAgreement");
-            if (agreed != null) {
-                this.userAgreement = agreed;
-            }
-        }
-        if (call.hasArgument("androidId")) {
-            this.customAndroidId = call.argument("androidId");
-        }
-
-        boolean ok = ensureSdkInitialized();
-        result.success(ok);
+        result.success("0.0.1");
     }
 
     private void handleMethodVerify(@NonNull MethodCall call, @NonNull final Result result) {
@@ -212,8 +135,6 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
             result.error("NO_ACTIVITY", "Plugin is not attached to an Activity.", null);
             return;
         }
-
-        ensureSdkInitialized();
 
         String configJsonString = "{}";
         if (call.hasArgument("config")) {
@@ -241,9 +162,7 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
         });
 
         Intent intent = new Intent(activity, TencentCaptchaActivity.class);
-        if (this.appId != null) {
-            intent.putExtra("appId", this.appId);
-        }
+        intent.putExtra("captchaHtmlPath", this.captchaHtmlPath);
         intent.putExtra("configJsonString", configJsonString);
         activity.startActivity(intent);
         activity.overridePendingTransition(0, 0);
@@ -252,7 +171,7 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
     }
 
     private void handleMethodStop(@NonNull MethodCall call, @NonNull Result result) {
-        TencentCaptcha.stop();
+        TencentCaptchaActivity.finishCurrent();
         result.success(null);
     }
 

@@ -1,4 +1,0 @@
--keep class com.**.TNative$aa { public *; }
--keep class com.**.TNative$aa$bb { public *; }
--keep class com.**.TNative$bb { *; }
--keep class com.**.TNative$bb$I { *; }
