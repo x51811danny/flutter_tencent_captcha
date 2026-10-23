@@ -2,108 +2,39 @@ package org.leanflutter.plugins.flutter_tencent_captcha;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.content.DialogInterface;
 import android.content.Intent;
-import android.graphics.Bitmap;
 import android.graphics.Color;
-import android.net.Uri;
-import android.net.http.SslError;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.util.Log;
+import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowManager;
-import android.webkit.JavascriptInterface;
-import android.webkit.SslErrorHandler;
-import android.webkit.ValueCallback;
-import android.webkit.WebSettings;
 import android.webkit.WebView;
-import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 
 import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
 
-class TencentCaptchaJsInterface {
-    private Handler handler = new Handler(Looper.getMainLooper());
-    private DialogInterface.OnDismissListener listener;
+import com.tencent.captcha.sdk.RetCode;
+import com.tencent.captcha.sdk.TencentCaptcha;
+import com.tencent.captcha.sdk.TencentCaptchaCallback;
+import com.tencent.captcha.sdk.TencentCaptchaParam;
 
-    public TencentCaptchaJsInterface(DialogInterface.OnDismissListener listener) {
-        this.listener = listener;
-    }
+import org.json.JSONException;
+import org.json.JSONObject;
 
-    @JavascriptInterface
-    public void onLoaded(final String data) {
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-                TencentCaptchaSender.getInstance().onLoaded(data);
-            }
-        };
-        handler.post(runnable);
-    }
+import java.util.Iterator;
 
-    @JavascriptInterface
-    public void onSuccess(final String data) {
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-                TencentCaptchaSender.getInstance().onSuccess(data);
-
-                listener.onDismiss(null);
-            }
-        };
-        handler.post(runnable);
-    }
-
-    @JavascriptInterface
-    public void onFail(final String data) {
-        Runnable runnable = new Runnable() {
-            @Override
-            public void run() {
-                TencentCaptchaSender.getInstance().onFail(data);
-                listener.onDismiss(null);
-            }
-        };
-        handler.post(runnable);
-    }
-}
-
-public class TencentCaptchaActivity extends Activity implements DialogInterface.OnDismissListener {
-    private String configJsonString;
+public class TencentCaptchaActivity extends Activity {
+    private static final String TAG = "TencentCaptchaActivity";
 
     private WebView webView;
-    private WebSettings webSettings;
-    private WebViewClient webViewClient = new WebViewClient() {
-        @RequiresApi(api = Build.VERSION_CODES.KITKAT)
-        @Override
-        public void onPageFinished(WebView view, String url) {
-            super.onPageFinished(view, url);
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private boolean finishedVerify = false;
 
-            String jsCode = String.format("window._verify('%s');", configJsonString);
-            webView.evaluateJavascript(jsCode, new ValueCallback<String>() {
-                @Override
-                public void onReceiveValue(String value) {
-                }
-            });
-        }
-
-        @Override
-        public boolean shouldOverrideUrlLoading(WebView view, String url) {
-            if (url != null && (url.startsWith("http://") || url.startsWith("https://"))) {
-                view.getContext().startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                return true;
-            }
-            return false;
-        }
-
-        @Override
-        public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) {
-            handler.cancel();
-        }
-    };
-
-    @SuppressLint({"ResourceAsColor", "AddJavascriptInterface", "SetJavaScriptEnabled"})
+    @SuppressLint({"SetJavaScriptEnabled"})
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -112,42 +43,217 @@ public class TencentCaptchaActivity extends Activity implements DialogInterface.
             Window window = getWindow();
             window.clearFlags(WindowManager.LayoutParams.FLAG_TRANSLUCENT_STATUS);
             window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
-
             window.setStatusBarColor(Color.parseColor("#99000000"));
         }
 
         this.webView = new WebView(this);
-
-        this.webView.setBackgroundColor(android.R.color.transparent);
-        this.webView.setWebViewClient(this.webViewClient);
-        this.webView.addJavascriptInterface(new TencentCaptchaJsInterface(this), "messageHandlers");
-
-        this.webSettings = this.webView.getSettings();
-        this.webSettings.setJavaScriptEnabled(true);
-        this.webSettings.setAllowFileAccessFromFileURLs(true);
-        this.webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
-        this.webView.requestFocus();
-
-        Intent intent = getIntent();
-        if (intent.hasExtra("configJsonString")) {
-            this.configJsonString = intent.getStringExtra("configJsonString");
-        }
-        if (intent.hasExtra("captchaHtmlPath")) {
-            String captchaHtmlPath = intent.getStringExtra("captchaHtmlPath");
-            this.webView.loadUrl("file:///android_asset/" + captchaHtmlPath);
-        }
+        this.webView.setBackgroundColor(Color.TRANSPARENT);
+        this.webView.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
 
         this.setContentView(this.webView);
+
+        Intent intent = getIntent();
+        String fallbackAppId = intent.getStringExtra("appId");
+        String configJsonString = intent.getStringExtra("configJsonString");
+
+        startTencentCaptcha(fallbackAppId, configJsonString);
+    }
+
+    private void startTencentCaptcha(String fallbackAppId, String configJsonString) {
+        JSONObject configJson = new JSONObject();
+        if (configJsonString != null && !configJsonString.isEmpty()) {
+            try {
+                configJson = new JSONObject(configJsonString);
+            } catch (JSONException e) {
+                Log.e(TAG, "Failed to parse configJsonString", e);
+            }
+        }
+
+        String captchaAppId = configJson.optString("appId", "");
+        if (captchaAppId.isEmpty() && fallbackAppId != null) {
+            captchaAppId = fallbackAppId;
+        }
+
+        TencentCaptchaParam.Builder paramBuilder = new TencentCaptchaParam.Builder()
+                .setWebView(this.webView)
+                .setCaptchaAppid(captchaAppId);
+
+        if (configJson.has("bizState") && !configJson.isNull("bizState")) {
+            paramBuilder.setBizState(configJson.opt("bizState"));
+        }
+
+        if (configJson.has("enableDarkMode") && !configJson.isNull("enableDarkMode")) {
+            Object darkModeObj = configJson.opt("enableDarkMode");
+            if (darkModeObj instanceof Boolean) {
+                paramBuilder.setEnableDarkMode((Boolean) darkModeObj);
+            } else if (darkModeObj instanceof String) {
+                paramBuilder.setEnableDarkMode((String) darkModeObj);
+            }
+        }
+
+        if (configJson.has("needFeedBack") && !configJson.isNull("needFeedBack")) {
+            Object feedBackObj = configJson.opt("needFeedBack");
+            if (feedBackObj instanceof Boolean) {
+                paramBuilder.setNeedFeedBack((Boolean) feedBackObj);
+            } else if (feedBackObj instanceof String) {
+                paramBuilder.setNeedFeedBack((String) feedBackObj);
+            }
+        }
+
+        if (configJson.has("userLanguage") && !configJson.isNull("userLanguage")) {
+            paramBuilder.setUserLanguage(configJson.optString("userLanguage"));
+        }
+
+        if (configJson.has("enableAged") && !configJson.isNull("enableAged")) {
+            paramBuilder.setEnableAged(configJson.optBoolean("enableAged"));
+        }
+
+        if (configJson.has("type") && !configJson.isNull("type")) {
+            paramBuilder.setType(configJson.optString("type"));
+        }
+
+        if (configJson.has("loading") && !configJson.isNull("loading")) {
+            paramBuilder.setLoading(configJson.optBoolean("loading"));
+        }
+
+        if (configJson.has("aidEncrypted") && !configJson.isNull("aidEncrypted")) {
+            paramBuilder.setAidEncrypted(configJson.optString("aidEncrypted"));
+        }
+
+        if (configJson.has("captchaPageHost") && !configJson.isNull("captchaPageHost")) {
+            paramBuilder.setCaptchaPageHost(configJson.optString("captchaPageHost"));
+        }
+
+        if (configJson.has("captchaTimeoutMillis") && !configJson.isNull("captchaTimeoutMillis")) {
+            paramBuilder.setCaptchaTimeoutMillis(configJson.optInt("captchaTimeoutMillis"));
+        }
+
+        if (configJson.has("enableAutoCheck") && !configJson.isNull("enableAutoCheck")) {
+            paramBuilder.setExtractParameter("enableAutoCheck", configJson.optBoolean("enableAutoCheck"));
+        }
+
+        if (configJson.has("extractParameters") && !configJson.isNull("extractParameters")) {
+            JSONObject extractParams = configJson.optJSONObject("extractParameters");
+            if (extractParams != null) {
+                Iterator<String> keys = extractParams.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    paramBuilder.setExtractParameter(key, extractParams.opt(key));
+                }
+            }
+        }
+
+        paramBuilder.setOptionsCallback(new TencentCaptchaParam.OptionsCallback() {
+            @Override
+            public void onCallback(final String optFuncName, final String data) {
+                if ("ready".equals(optFuncName)) {
+                    mainHandler.post(new Runnable() {
+                        @Override
+                        public void run() {
+                            TencentCaptchaSender.getInstance().onLoaded(data != null ? data : "{}");
+                        }
+                    });
+                }
+            }
+        });
+
+        TencentCaptchaCallback callback = new TencentCaptchaCallback() {
+            @Override
+            public void finish(final RetCode ret, final JSONObject resultObject) {
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        finishedVerify = true;
+                        if (ret == RetCode.OK && resultObject != null) {
+                            int verifyRet = resultObject.optInt("ret", -1);
+                            if (verifyRet == 0) {
+                                TencentCaptchaSender.getInstance().onSuccess(resultObject.toString());
+                            } else {
+                                TencentCaptchaSender.getInstance().onFail(resultObject.toString());
+                            }
+                        } else {
+                            JSONObject errJson = resultObject != null ? resultObject : new JSONObject();
+                            try {
+                                if (ret != null) {
+                                    errJson.put("retCode", ret.getCode());
+                                    errJson.put("retMsg", ret.getMsg());
+                                    if (!errJson.has("errorCode")) {
+                                        errJson.put("errorCode", ret.getCode());
+                                    }
+                                    if (!errJson.has("errorMessage")) {
+                                        errJson.put("errorMessage", ret.getMsg());
+                                    }
+                                }
+                            } catch (JSONException ignored) {
+                            }
+                            TencentCaptchaSender.getInstance().onFail(errJson.toString());
+                        }
+                        closeActivity();
+                    }
+                });
+            }
+
+            @Override
+            public void exception(final Throwable t) {
+                mainHandler.post(new Runnable() {
+                    @Override
+                    public void run() {
+                        finishedVerify = true;
+                        JSONObject errJson = new JSONObject();
+                        try {
+                            errJson.put("retCode", RetCode.CAPTCHA_EXCEPTION.getCode());
+                            errJson.put("errorMessage", t != null ? t.getMessage() : "Unknown exception");
+                        } catch (JSONException ignored) {
+                        }
+                        TencentCaptchaSender.getInstance().onFail(errJson.toString());
+                        closeActivity();
+                    }
+                });
+            }
+        };
+
+        RetCode startRet = TencentCaptcha.start(callback, paramBuilder.build());
+        if (startRet != RetCode.OK) {
+            finishedVerify = true;
+            JSONObject errJson = new JSONObject();
+            try {
+                errJson.put("retCode", startRet.getCode());
+                errJson.put("retMsg", startRet.getMsg());
+                errJson.put("errorCode", startRet.getCode());
+                errJson.put("errorMessage", startRet.getMsg());
+            } catch (JSONException ignored) {
+            }
+            TencentCaptchaSender.getInstance().onFail(errJson.toString());
+            closeActivity();
+        }
+    }
+
+    private void closeActivity() {
+        if (!isFinishing()) {
+            finish();
+            overridePendingTransition(0, 0);
+        }
     }
 
     @Override
     protected void onPause() {
         overridePendingTransition(0, 0);
         super.onPause();
+        TencentCaptcha.stop();
     }
 
     @Override
-    public void onDismiss(DialogInterface dialog) {
-        this.finish();
+    protected void onDestroy() {
+        if (!finishedVerify) {
+            TencentCaptcha.stop();
+        }
+        if (this.webView != null) {
+            this.webView.destroy();
+            this.webView = null;
+        }
+        super.onDestroy();
     }
 }

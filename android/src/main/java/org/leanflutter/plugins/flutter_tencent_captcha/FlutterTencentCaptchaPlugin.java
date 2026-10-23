@@ -1,12 +1,19 @@
 package org.leanflutter.plugins.flutter_tencent_captcha;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
-import android.app.ActivityOptions;
 import android.content.Context;
 import android.content.Intent;
+import android.os.Handler;
+import android.os.Looper;
+import android.provider.Settings;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
+
+import com.tencent.captcha.sdk.RetCode;
+import com.tencent.captcha.sdk.TencentCaptcha;
+import com.tencent.captcha.sdk.TencentCaptchaConfig;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -24,28 +31,28 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
-import io.flutter.plugin.common.PluginRegistry.Registrar;
 
 /**
  * FlutterTencentCaptchaPlugin
  */
 public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler, ActivityAware {
+    private static final String TAG = "TencentCaptchaPlugin";
     private static final String CHANNEL_NAME = "flutter_tencent_captcha";
     private static final String EVENT_CHANNEL_NAME = "flutter_tencent_captcha/event_channel";
 
-    /// The MethodChannel that will the communication between Flutter and native Android
-    ///
-    /// This local reference serves to register the plugin with the Flutter Engine and unregister it
-    /// when the Flutter Engine is detached from the Activity
     private MethodChannel channel;
     private EventChannel eventChannel;
     private EventChannel.EventSink eventSink;
 
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
+
     private Context context;
     private Activity activity;
 
-    private String captchaHtmlPath;
     private String appId;
+    private boolean userAgreement = true;
+    private String customAndroidId;
+    private boolean sdkInitialized = false;
 
     private void setupChannel(BinaryMessenger messenger, Context context) {
         this.context = context;
@@ -60,16 +67,19 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
     private void teardownChannel() {
         this.context = null;
 
-        this.channel.setMethodCallHandler(null);
-        this.channel = null;
+        if (this.channel != null) {
+            this.channel.setMethodCallHandler(null);
+            this.channel = null;
+        }
 
-        this.eventChannel.setStreamHandler(null);
-        this.eventChannel = null;
+        if (this.eventChannel != null) {
+            this.eventChannel.setStreamHandler(null);
+            this.eventChannel = null;
+        }
     }
 
     @Override
     public void onAttachedToEngine(@NonNull FlutterPluginBinding flutterPluginBinding) {
-        this.captchaHtmlPath = flutterPluginBinding.getFlutterAssets().getAssetFilePathBySubpath("assets/captcha.html", "flutter_tencent_captcha");
         this.setupChannel(flutterPluginBinding.getBinaryMessenger(), flutterPluginBinding.getApplicationContext());
     }
 
@@ -79,17 +89,17 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
     }
 
     @Override
-    public void onAttachedToActivity(ActivityPluginBinding activityPluginBinding) {
+    public void onAttachedToActivity(@NonNull ActivityPluginBinding activityPluginBinding) {
         this.activity = activityPluginBinding.getActivity();
     }
 
     @Override
     public void onDetachedFromActivityForConfigChanges() {
-
+        this.activity = null;
     }
 
     @Override
-    public void onReattachedToActivityForConfigChanges(ActivityPluginBinding activityPluginBinding) {
+    public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding activityPluginBinding) {
         this.activity = activityPluginBinding.getActivity();
     }
 
@@ -108,80 +118,132 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
         this.eventSink = null;
     }
 
-    // This static function is optional and equivalent to onAttachedToEngine. It supports the old
-    // pre-Flutter-1.12 Android projects. You are encouraged to continue supporting
-    // plugin registration via this function while apps migrate to use the new Android APIs
-    // post-flutter-1.12 via https://flutter.dev/go/android-project-migration.
-    //
-    // It is encouraged to share logic between onAttachedToEngine and registerWith to keep
-    // them functionally equivalent. Only one of onAttachedToEngine or registerWith will be called
-    // depending on the user's project. onAttachedToEngine or registerWith must both be defined
-    // in the same class.
-    public static void registerWith(Registrar registrar) {
-        FlutterTencentCaptchaPlugin plugin = new FlutterTencentCaptchaPlugin();
-        plugin.setupChannel(registrar.messenger(), registrar.activeContext());
-    }
-
     @Override
     public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
-        if (call.method.equals("getSDKVersion")) {
-            handleMethodGetSDKVersion(call, result);
-        } else if (call.method.equals("init")) {
-            handleMethodInit(call, result);
-        } else if (call.method.equals("verify")) {
-            handleMethodVerify(call, result);
-        } else {
-            result.notImplemented();
+        switch (call.method) {
+            case "getSDKVersion":
+                handleMethodGetSDKVersion(call, result);
+                break;
+            case "init":
+                handleMethodInit(call, result);
+                break;
+            case "verify":
+                handleMethodVerify(call, result);
+                break;
+            case "stop":
+                handleMethodStop(call, result);
+                break;
+            default:
+                result.notImplemented();
+                break;
         }
     }
 
-
     private void handleMethodGetSDKVersion(@NonNull MethodCall call, @NonNull Result result) {
-        result.success("0.0.1");
+        result.success("2.1.1");
+    }
+
+    private synchronized boolean ensureSdkInitialized() {
+        if (sdkInitialized) {
+            return true;
+        }
+        if (context == null) {
+            return false;
+        }
+
+        final boolean agreed = this.userAgreement;
+        final String providedAndroidId = this.customAndroidId;
+        final Context appContext = context.getApplicationContext();
+
+        TencentCaptchaConfig.Builder configBuilder = new TencentCaptchaConfig.Builder(
+                appContext,
+                new TencentCaptchaConfig.ITencentCaptchaPrivacyPolicy() {
+                    @Override
+                    public boolean userAgreement() {
+                        return agreed;
+                    }
+                },
+                new TencentCaptchaConfig.ICaptchaDeviceInfoProvider() {
+                    @SuppressLint("HardwareIds")
+                    @Override
+                    public String getAndroidId() {
+                        if (providedAndroidId != null && !providedAndroidId.isEmpty()) {
+                            return providedAndroidId;
+                        }
+                        try {
+                            return Settings.Secure.getString(appContext.getContentResolver(), Settings.Secure.ANDROID_ID);
+                        } catch (Exception e) {
+                            return "";
+                        }
+                    }
+                }
+        );
+
+        RetCode ret = TencentCaptcha.init(configBuilder.build());
+        if (ret == RetCode.OK) {
+            sdkInitialized = true;
+            return true;
+        } else {
+            Log.e(TAG, "TencentCaptcha.init failed, ret code: " + ret.getCode() + " msg: " + ret.getMsg());
+            return false;
+        }
     }
 
     private void handleMethodInit(@NonNull MethodCall call, @NonNull Result result) {
-        this.appId = call.argument("appId");
-        result.success(true);
+        if (call.hasArgument("appId")) {
+            this.appId = call.argument("appId");
+        }
+        if (call.hasArgument("userAgreement")) {
+            Boolean agreed = call.argument("userAgreement");
+            if (agreed != null) {
+                this.userAgreement = agreed;
+            }
+        }
+        if (call.hasArgument("androidId")) {
+            this.customAndroidId = call.argument("androidId");
+        }
+
+        boolean ok = ensureSdkInitialized();
+        result.success(ok);
     }
 
     private void handleMethodVerify(@NonNull MethodCall call, @NonNull final Result result) {
-        String configJsonString = "{}";
+        if (activity == null) {
+            result.error("NO_ACTIVITY", "Plugin is not attached to an Activity.", null);
+            return;
+        }
 
-        if (call.hasArgument("config"))
-            configJsonString = call.argument("config");
+        ensureSdkInitialized();
+
+        String configJsonString = "{}";
+        if (call.hasArgument("config")) {
+            String argConfig = call.argument("config");
+            if (argConfig != null) {
+                configJsonString = argConfig;
+            }
+        }
 
         TencentCaptchaSender.getInstance().listene(new TencentCaptchaListener() {
             @Override
-            public void onLoaded(String data) {
-                final Map<String, Object> result = new HashMap<>();
-                result.put("method", "onLoaded");
-                result.put("data", convertMsgToMap(data));
-
-                eventSink.success(result);
+            public void onLoaded(final String data) {
+                sendEvent("onLoaded", data);
             }
 
             @Override
-            public void onSuccess(String data) {
-                final Map<String, Object> result = new HashMap<>();
-                result.put("method", "onSuccess");
-                result.put("data", convertMsgToMap(data));
-
-                eventSink.success(result);
+            public void onSuccess(final String data) {
+                sendEvent("onSuccess", data);
             }
 
             @Override
-            public void onFail(String msg) {
-                final Map<String, Object> result = new HashMap<>();
-                result.put("method", "onFail");
-                result.put("data", convertMsgToMap(msg));
-
-                eventSink.success(result);
+            public void onFail(final String msg) {
+                sendEvent("onFail", msg);
             }
         });
 
         Intent intent = new Intent(activity, TencentCaptchaActivity.class);
-        intent.putExtra("captchaHtmlPath", this.captchaHtmlPath);
+        if (this.appId != null) {
+            intent.putExtra("appId", this.appId);
+        }
         intent.putExtra("configJsonString", configJsonString);
         activity.startActivity(intent);
         activity.overridePendingTransition(0, 0);
@@ -189,25 +251,49 @@ public class FlutterTencentCaptchaPlugin implements FlutterPlugin, MethodCallHan
         result.success(true);
     }
 
+    private void handleMethodStop(@NonNull MethodCall call, @NonNull Result result) {
+        TencentCaptcha.stop();
+        result.success(null);
+    }
+
+    private void sendEvent(final String method, final String jsonString) {
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (eventSink == null) {
+                    return;
+                }
+                final Map<String, Object> event = new HashMap<>();
+                event.put("method", method);
+                event.put("data", convertMsgToMap(jsonString));
+                eventSink.success(event);
+            }
+        });
+    }
+
     private static Map<String, Object> convertMsgToMap(String jsonString) {
-        Map<String, Object> map = new HashMap<String, Object>();
-        JSONObject jsonObject = null;
+        Map<String, Object> map = new HashMap<>();
+        if (jsonString == null || jsonString.isEmpty()) {
+            return map;
+        }
         try {
-            jsonObject = new JSONObject(jsonString);
+            JSONObject jsonObject = new JSONObject(jsonString);
             map = toMap(jsonObject);
         } catch (JSONException ex) {
-            // skip;
+            map.put("raw", jsonString);
         }
         return map;
     }
 
     private static Map<String, Object> toMap(JSONObject jsonObject) throws JSONException {
-        Map<String, Object> map = new HashMap<String, Object>();
+        Map<String, Object> map = new HashMap<>();
         Iterator<String> keys = jsonObject.keys();
         while (keys.hasNext()) {
             String key = keys.next();
             Object value = jsonObject.get(key);
-            if (value instanceof JSONObject) {
+            if (value == JSONObject.NULL) {
+                value = null;
+            } else if (value instanceof JSONObject) {
                 value = toMap((JSONObject) value);
             }
             map.put(key, value);

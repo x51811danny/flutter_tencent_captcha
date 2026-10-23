@@ -1,5 +1,7 @@
 import 'dart:convert';
+import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import 'tencent_captcha_config.dart';
@@ -25,13 +27,26 @@ class TencentCaptcha {
     return sdkVersion;
   }
 
-  static Future<bool> init(String appId) async {
+  static Future<bool> init(
+    String appId, {
+    bool userAgreement = true,
+    String? androidId,
+  }) async {
     if (_eventChannelReadied != true) {
       _eventChannel.receiveBroadcastStream().listen(_handleVerifyOnEvent);
       _eventChannelReadied = true;
     }
 
     sdkAppId = appId;
+
+    if (!kIsWeb && Platform.isAndroid) {
+      final bool? initialized = await _methodChannel.invokeMethod<bool>('init', {
+        'appId': appId,
+        'userAgreement': userAgreement,
+        if (androidId != null) 'androidId': androidId,
+      });
+      return initialized ?? false;
+    }
 
     return true;
   }
@@ -42,6 +57,11 @@ class TencentCaptcha {
     Function(dynamic data)? onSuccess,
     Function(dynamic data)? onFail,
   }) async {
+    if (_eventChannelReadied != true) {
+      _eventChannel.receiveBroadcastStream().listen(_handleVerifyOnEvent);
+      _eventChannelReadied = true;
+    }
+
     _verifyOnLoaded = onLoaded;
     _verifyOnSuccess = onSuccess;
     _verifyOnFail = onFail;
@@ -52,6 +72,12 @@ class TencentCaptcha {
     return await _methodChannel.invokeMethod('verify', {
       'config': json.encode(config.toJson()),
     });
+  }
+
+  static Future<void> stop() async {
+    if (!kIsWeb && Platform.isAndroid) {
+      await _methodChannel.invokeMethod('stop');
+    }
   }
 
   static _handleVerifyOnEvent(dynamic event) {

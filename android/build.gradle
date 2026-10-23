@@ -4,30 +4,50 @@ version '1.0'
 buildscript {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
     }
 
     dependencies {
-        classpath 'com.android.tools.build:gradle:3.5.0'
+        classpath 'com.android.tools.build:gradle:8.11.1'
     }
 }
 
 rootProject.allprojects {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
+        flatDir {
+            dirs project(':flutter_tencent_captcha').file('libs')
+        }
     }
 }
 
 apply plugin: 'com.android.library'
 
 android {
-    compileSdkVersion 28
+    if (project.android.hasProperty("namespace")) {
+        namespace 'org.leanflutter.plugins.flutter_tencent_captcha'
+    }
+
+    compileSdk 35
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
 
     defaultConfig {
-        minSdkVersion 16
+        minSdkVersion 21
+        consumerProguardFiles 'proguard-rules.pro'
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a"
+        }
     }
     lintOptions {
         disable 'InvalidPackage'
     }
+}
+
+dependencies {
+    implementation(name: 'android_oversea_v2.1.1', ext: 'aar')
 }
