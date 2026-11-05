@@ -15,11 +15,49 @@
         background-color: transparent;
         margin: 0;
         padding: 0;
+        height: 100%;
+      }
+      /* 國際版 SDK 只支援掛進容器，遮罩與面板由本頁自繪 */
+      .backdrop {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: rgba(0, 0, 0, 0.5);
+      }
+      .panel {
+        position: relative;
+        min-width: 300px;
+        max-width: calc(100vw - 32px);
+        padding: 36px 12px 12px;
+        border-radius: 12px;
+        background-color: #fff;
+        box-sizing: border-box;
+      }
+      .close {
+        position: absolute;
+        top: 4px;
+        right: 4px;
+        width: 32px;
+        height: 32px;
+        border: 0;
+        background: transparent;
+        font-size: 22px;
+        line-height: 32px;
+        color: #999;
       }
     </style>
-    <script src="https://turing.captcha.qcloud.com/TCaptcha.js"></script>
+    <!-- 後端對接的是騰訊雲國際版，須用國際版 SDK；大陸版 TCaptcha.js 會回 1006 -->
+    <script src="https://ca.turing.captcha.qcloud.com/TJNCaptcha-global.js"></script>
   </head>
   <body>
+    <div class="backdrop">
+      <div class="panel">
+        <button class="close" type="button" aria-label="close" id="close">×</button>
+        <div id="captcha-container"></div>
+      </div>
+    </div>
     <script type="text/javascript">
       const bridgeMethod = (method, data) => {
         if (window.webkit) {
@@ -35,6 +73,18 @@
       const bridgeOnSuccess = (data) => bridgeMethod("onSuccess", data);
       const bridgeOnFail = (data) => bridgeMethod("onFail", data);
 
+      let finished = false;
+      const finish = (callback, data) => {
+        if (finished) return;
+        finished = true;
+        callback(data);
+      };
+
+      // 與 JS SDK 使用者關閉（ret=2）同形
+      document.getElementById("close").addEventListener("click", () => {
+        finish(bridgeOnFail, { ret: 2 });
+      });
+
       const verify = (configJsonString) => {
         let config = JSON.parse(configJsonString);
         config = Object.assign(config, {
@@ -44,24 +94,27 @@
         });
         let appId = config.appId;
         delete config.appId;
+        // baseUrl 只給原生端決定頁面來源，不傳給 TencentCaptcha
+        delete config.baseUrl;
         try {
           const txCaptcha = new TencentCaptcha(
+            document.getElementById("captcha-container"),
             appId,
             (res) => {
               if (res.ret === 0) {
-                bridgeOnSuccess(res);
+                finish(bridgeOnSuccess, res);
               } else {
-                bridgeOnFail(res);
+                finish(bridgeOnFail, res);
               }
             },
             config,
           );
           txCaptcha.show();
         } catch (error) {
-          // TCaptcha.js 載入失敗：依騰訊雲官方容災做法產生 terror ticket，交由後端判斷是否放行
-          bridgeOnSuccess({
+          // SDK 載入失敗：依騰訊雲官方容災做法產生 trerror ticket，交由後端判斷是否放行
+          finish(bridgeOnSuccess, {
             ret: 0,
-            ticket: "terror_1001_" + appId + "_" + Math.floor(Date.now() / 1000),
+            ticket: "trerror_1001_" + appId + "_" + Math.floor(Date.now() / 1000),
             randstr: "@" + Math.random().toString(36).slice(2),
             errorCode: 1001,
             errorMessage: "jsload_error",

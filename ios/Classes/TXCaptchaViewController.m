@@ -47,8 +47,17 @@
     [super viewDidAppear:animated];
     
     NSURL* url = [NSURL fileURLWithPath:self.captchaHtmlPath];
-    
-    if (@available(iOS 9.0, *)) {
+
+    // 有 baseUrl 時以 https 網域作為頁面來源，避免 file:// / null 來源被騰訊風控拒絕
+    NSData* configData = [self.configJsonString dataUsingEncoding:NSUTF8StringEncoding];
+    NSDictionary* config = configData ? [NSJSONSerialization JSONObjectWithData:configData options:0 error:nil] : nil;
+    NSString* baseUrl = [config isKindOfClass:[NSDictionary class]] ? config[@"baseUrl"] : nil;
+    NSString* html = [baseUrl isKindOfClass:[NSString class]] && baseUrl.length > 0
+        ? [NSString stringWithContentsOfFile:self.captchaHtmlPath encoding:NSUTF8StringEncoding error:nil]
+        : nil;
+    if (html != nil) {
+        [self.webView loadHTMLString:html baseURL:[NSURL URLWithString:baseUrl]];
+    } else if (@available(iOS 9.0, *)) {
         [self.webView loadFileURL:url allowingReadAccessToURL:url];
     } else {
         // Fallback on earlier versions

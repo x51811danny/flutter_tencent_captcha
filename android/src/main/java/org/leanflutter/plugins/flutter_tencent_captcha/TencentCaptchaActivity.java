@@ -22,6 +22,9 @@ import androidx.annotation.Nullable;
 
 import org.json.JSONObject;
 
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 
 public class TencentCaptchaActivity extends Activity {
@@ -134,7 +137,37 @@ public class TencentCaptchaActivity extends Activity {
 
         String captchaHtmlPath = intent.getStringExtra("captchaHtmlPath");
         if (captchaHtmlPath != null) {
-            this.webView.loadUrl("file:///android_asset/" + captchaHtmlPath);
+            String baseUrl = readBaseUrl(this.configJsonString);
+            String html = baseUrl.isEmpty() ? null : readAsset(captchaHtmlPath);
+            if (html != null) {
+                // 以 https 網域作為頁面來源，避免 file:// / null 來源被騰訊風控拒絕
+                this.webView.loadDataWithBaseURL(baseUrl, html, "text/html", "utf-8", null);
+            } else {
+                this.webView.loadUrl("file:///android_asset/" + captchaHtmlPath);
+            }
+        }
+    }
+
+    private static String readBaseUrl(String configJsonString) {
+        try {
+            return new JSONObject(configJsonString).optString("baseUrl", "");
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    @Nullable
+    private String readAsset(String path) {
+        try (InputStream in = getAssets().open(path)) {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            byte[] buffer = new byte[4096];
+            int n;
+            while ((n = in.read(buffer)) != -1) {
+                out.write(buffer, 0, n);
+            }
+            return out.toString("UTF-8");
+        } catch (IOException e) {
+            return null;
         }
     }
 

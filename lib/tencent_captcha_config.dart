@@ -27,6 +27,9 @@ class TencentCaptchaConfig {
   bool? enableAutoCheck;
   // 支持灵活设置对应key及value值 (setExtractParameter)
   Map<String, dynamic>? extractParameters;
+  // 验证码页面在 WebView 中的来源（https 网域）。为空时以 file:// 载入本地 html；
+  // 腾讯 FAQ 指出 file:// / null 来源会被风控视为异常设备，建议设定 https baseUrl
+  String? baseUrl;
 
   TencentCaptchaConfig({
     this.appId,
@@ -43,6 +46,7 @@ class TencentCaptchaConfig {
     this.captchaTimeoutMillis,
     this.enableAutoCheck,
     this.extractParameters,
+    this.baseUrl,
   });
 
   Map<String, dynamic> toJson() {
@@ -80,6 +84,7 @@ class TencentCaptchaConfig {
     if (extractParameters != null) {
       jsonObject.putIfAbsent("extractParameters", () => extractParameters);
     }
+    if (baseUrl != null) jsonObject.putIfAbsent("baseUrl", () => baseUrl);
 
     return jsonObject;
   }
