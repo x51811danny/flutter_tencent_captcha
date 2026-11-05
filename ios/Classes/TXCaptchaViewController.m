@@ -110,6 +110,8 @@
 }
 
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    // 頁面載入失敗也要回傳結果，否則呼叫端永遠等不到；與 JS 端使用者關閉（ret=2）同形
+    self.onFail(@{@"ret": @2});
     [self dismissViewControllerAnimated:NO completion:nil];
 }
 

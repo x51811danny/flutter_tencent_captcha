@@ -28,6 +28,8 @@ public class TencentCaptchaActivity extends Activity {
     private static WeakReference<TencentCaptchaActivity> current = new WeakReference<>(null);
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    // 是否已回傳結果；未回傳就被關閉（系統返回鍵等）時，onDestroy 補送 onFail，避免呼叫端永遠等不到結果
+    private boolean resultSent = false;
     private WebView webView;
     private String configJsonString = "{}";
 
@@ -55,6 +57,7 @@ public class TencentCaptchaActivity extends Activity {
             mainHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    resultSent = true;
                     TencentCaptchaSender.getInstance().onSuccess(data);
                     closeActivity();
                 }
@@ -66,6 +69,7 @@ public class TencentCaptchaActivity extends Activity {
             mainHandler.post(new Runnable() {
                 @Override
                 public void run() {
+                    resultSent = true;
                     TencentCaptchaSender.getInstance().onFail(data);
                     closeActivity();
                 }
@@ -149,6 +153,12 @@ public class TencentCaptchaActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        // isFinishing 排除設定變更造成的重建
+        if (!resultSent && isFinishing()) {
+            resultSent = true;
+            // 與 JS 端使用者關閉（ret=2）同形
+            TencentCaptchaSender.getInstance().onFail("{\"ret\":2}");
+        }
         if (current.get() == this) {
             current.clear();
         }

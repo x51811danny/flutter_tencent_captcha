@@ -44,18 +44,29 @@
         });
         let appId = config.appId;
         delete config.appId;
-        const txCaptcha = new TencentCaptcha(
-          appId,
-          (res) => {
-            if (res.ret === 0) {
-              bridgeOnSuccess(res);
-            } else {
-              bridgeOnFail(res);
-            }
-          },
-          config,
-        );
-        txCaptcha.show();
+        try {
+          const txCaptcha = new TencentCaptcha(
+            appId,
+            (res) => {
+              if (res.ret === 0) {
+                bridgeOnSuccess(res);
+              } else {
+                bridgeOnFail(res);
+              }
+            },
+            config,
+          );
+          txCaptcha.show();
+        } catch (error) {
+          // TCaptcha.js 載入失敗：依騰訊雲官方容災做法產生 terror ticket，交由後端判斷是否放行
+          bridgeOnSuccess({
+            ret: 0,
+            ticket: "terror_1001_" + appId + "_" + Math.floor(Date.now() / 1000),
+            randstr: "@" + Math.random().toString(36).slice(2),
+            errorCode: 1001,
+            errorMessage: "jsload_error",
+          });
+        }
       };
 
       window._verify = verify;
