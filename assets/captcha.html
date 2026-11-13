@@ -25,6 +25,15 @@
         align-items: center;
         justify-content: center;
         background-color: rgba(0, 0, 0, 0.5);
+        /* SDK 就緒前整頁透明（由宿主 App 顯示自己的 loading），就緒後淡入，避免先閃一個空白面板 */
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s ease-out, visibility 0s linear 0.3s;
+      }
+      .backdrop.revealed {
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 0.3s ease-out, visibility 0s;
       }
       .panel {
         position: relative;
@@ -73,6 +82,18 @@
       const bridgeOnSuccess = (data) => bridgeMethod("onSuccess", data);
       const bridgeOnFail = (data) => bridgeMethod("onFail", data);
 
+      // SDK 把驗證碼畫進容器後才顯示面板並通知宿主收起 loading（onLoaded）。
+      // 國際版容器寫法實測不會呼叫 ready，改以容器出現子節點為準；ready 仍保留，誰先到算誰。
+      // 遲遲畫不出來時逾時照樣顯示，至少能按關閉。
+      const REVEAL_TIMEOUT_MS = 8000;
+      let revealed = false;
+      const reveal = (data) => {
+        if (revealed) return;
+        revealed = true;
+        document.querySelector(".backdrop").classList.add("revealed");
+        bridgeOnLoaded(data || {});
+      };
+
       let finished = false;
       const finish = (callback, data) => {
         if (finished) return;
@@ -89,16 +110,24 @@
         let config = JSON.parse(configJsonString);
         config = Object.assign(config, {
           ready: (data) => {
-            bridgeOnLoaded(data);
+            reveal(data);
           },
         });
         let appId = config.appId;
         delete config.appId;
         // baseUrl 只給原生端決定頁面來源，不傳給 TencentCaptcha
         delete config.baseUrl;
+        const container = document.getElementById("captcha-container");
+        const observer = new MutationObserver(() => {
+          if (container.childElementCount > 0) {
+            observer.disconnect();
+            reveal({});
+          }
+        });
+        observer.observe(container, { childList: true });
         try {
           const txCaptcha = new TencentCaptcha(
-            document.getElementById("captcha-container"),
+            container,
             appId,
             (res) => {
               if (res.ret === 0) {
@@ -110,6 +139,7 @@
             config,
           );
           txCaptcha.show();
+          setTimeout(() => reveal({ timeout: true }), REVEAL_TIMEOUT_MS);
         } catch (error) {
           // SDK 載入失敗：依騰訊雲官方容災做法產生 trerror ticket，交由後端判斷是否放行
           finish(bridgeOnSuccess, {
